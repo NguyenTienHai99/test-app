@@ -1,10 +1,13 @@
 /**
- * @fileoverview Server-side PumpChatClient for Next.js API routes
- * This runs in Node.js environment and can set custom headers
+ * Server-side PumpChatClient for Next.js API routes
+ * Handles WebSocket connections to pump.fun chat in Node.js environment
  */
 
-import { io, Socket } from 'socket.io-client'
+import io from 'socket.io-client'
 import { EventEmitter } from 'events'
+
+// Type for socket.io-client v4
+type SocketIOSocket = ReturnType<typeof io>
 
 export interface IMessage {
   id: string
@@ -22,17 +25,21 @@ export interface PumpChatClientOptions {
   roomId: string
   username?: string
   messageHistoryLimit?: number
+  maxReconnectAttempts?: number
+  enableLogging?: boolean
 }
 
 export class ServerPumpChatClient extends EventEmitter {
-  private socket: Socket | null = null
-  private roomId: string
-  private username: string
+  private socket: SocketIOSocket | null = null
+  private readonly roomId: string
+  private readonly username: string
+  private readonly messageHistoryLimit: number
+  private readonly maxReconnectAttempts: number
+  private readonly enableLogging: boolean
+  
   private messageHistory: IMessage[] = []
-  private messageHistoryLimit: number
   private isConnected: boolean = false
   private reconnectAttempts: number = 0
-  private maxReconnectAttempts: number = 5
   private reconnectTimeout: NodeJS.Timeout | null = null
   private isReconnecting: boolean = false
   private shouldReconnect: boolean = true
@@ -40,11 +47,25 @@ export class ServerPumpChatClient extends EventEmitter {
   constructor(options: PumpChatClientOptions) {
     super()
     this.roomId = options.roomId
-    this.username = options.username || "anonymous"
-    this.messageHistoryLimit = options.messageHistoryLimit || 100
+    this.username = options.username || `User${Math.random().toString(36).substr(2, 5)}`
+    this.messageHistoryLimit = options.messageHistoryLimit ?? 100
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5
+    this.enableLogging = options.enableLogging ?? false
   }
 
-  public connect() {
+  private log(message: string): void {
+    if (this.enableLogging) {
+      console.log(message)
+    }
+  }
+
+  private logError(message: string, error?: unknown): void {
+    if (this.enableLogging) {
+      console.error(message, error ?? '')
+    }
+  }
+
+  public connect(): void {
     try {
       // Clear any existing reconnection timeout
       if (this.reconnectTimeout) {
@@ -52,27 +73,20 @@ export class ServerPumpChatClient extends EventEmitter {
         this.reconnectTimeout = null
       }
 
-      console.log(`🔄 Attempting to connect to pump.fun chat (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts + 1})`)
-      console.log(`🔄 Environment: ${process.env.NODE_ENV}, Platform: ${process.platform}`)
+      this.log(`🔄 Connecting to pump.fun chat (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts + 1})`)
 
-      // Server-side Socket.IO connection - enhanced with CORS-friendly headers
+      // Server-side Socket.IO connection with pump.fun compatible headers  
       this.socket = io('wss://livechat.pump.fun', {
-        transports: ['websocket'], // Start with websocket only since test shows it works
+        transports: ['websocket'],
         timeout: 20000,
         forceNew: true,
         autoConnect: true,
-        reconnection: false, // We handle reconnection manually
-        extraHeaders: {
+        reconnection: false, // Handle reconnection manually
+        auth: {
+          // Headers are passed in auth for socket.io v4
           'Origin': 'https://pump.fun',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits',
-          'Sec-WebSocket-Version': '13'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         },
-        withCredentials: false, // Important for CORS
         upgrade: true,
         rememberUpgrade: false
       })
@@ -80,36 +94,32 @@ export class ServerPumpChatClient extends EventEmitter {
       this.setupSocketEventHandlers()
       
     } catch (error) {
-      console.error("❌ Failed to create server-side Socket.IO connection:", error)
+      this.logError("❌ Failed to create Socket.IO connection:", error)
       this.emit("error", error)
       this.scheduleReconnection()
     }
   }
 
-  private setupSocketEventHandlers() {
+  private setupSocketEventHandlers(): void {
     if (!this.socket) return
 
-    console.log('🔧 Setting up Socket.IO event handlers...')
+    this.log('🔧 Setting up Socket.IO event handlers...')
 
     this.socket.on('connect', () => {
-      console.log('🟢 Server-side Socket.IO Connected')
-      console.log('🟢 Socket ID:', this.socket?.id)
-      console.log('🟢 Socket connected state:', this.socket?.connected)
-      console.log('🟢 Socket transport:', this.socket?.io?.engine?.transport?.name)
+      this.log(`🟢 Connected! Socket ID: ${this.socket?.id}`)
+      // Note: Transport info not available in socket.io v4 public API
       
       this.isConnected = true
       this.reconnectAttempts = 0
       this.isReconnecting = false
       this.emit('connected')
       
-      // Wait a bit before joining room to ensure connection is stable
-      setTimeout(() => {
-        this.joinRoom()
-      }, 500)
+      // Wait before joining room to ensure connection stability
+      setTimeout(() => this.joinRoom(), 500)
     })
 
-    this.socket.on('disconnect', (reason) => {
-      console.log('🔴 Server-side Socket.IO Disconnected:', reason)
+    this.socket.on('disconnect', (reason: string) => {
+      this.log(`🔴 Disconnected: ${reason}`)
       this.isConnected = false
       this.emit('disconnected')
       
@@ -120,91 +130,80 @@ export class ServerPumpChatClient extends EventEmitter {
     })
 
     this.socket.on('connect_error', (error: Error & { description?: string }) => {
-      console.error('🚨 Server-side Socket.IO Connection Error:', error)
-      console.error('🚨 Error message:', error.message)
+      this.logError('🚨 Connection error:', error.message)
       
-      // Check for specific HTTP error codes
-      if (error.message && error.message.includes('502')) {
-        console.error('🚨 HTTP 502 Bad Gateway detected!')
-        console.error('   → This indicates pump.fun server is down or blocking connections')
-        console.error('   → Trying polling transport as fallback...')
-      } else if (error.description && typeof error.description === 'string') {
-        if (error.description.includes('502')) {
-          console.error('🚨 HTTP 502 in error description - server issue detected')
-        }
+      // Check for specific server errors
+      if (error.message?.includes('502') || error.description?.includes('502')) {
+        this.logError('🚨 HTTP 502 Bad Gateway - server may be down')
       }
       
       this.emit('error', error)
       
-      // Schedule reconnection on connection error
       if (this.shouldReconnect) {
         this.scheduleReconnection()
       }
     })
 
-    this.socket.on('error', (error) => {
-      console.error('🚨 Server-side Socket.IO General Error:', error)
+    this.socket.on('error', (error: Error) => {
+      this.logError('🚨 Socket error:', error)
       this.emit('error', error)
     })
 
-    // Add timeout handler - increased to 20 seconds to match socket timeout
+    // Connection timeout handler
     setTimeout(() => {
       if (!this.isConnected && this.socket) {
-        console.warn('⏰ Socket.IO connection timeout after 20 seconds')
+        this.log('⏰ Connection timeout after 20 seconds')
         this.socket.disconnect()
         this.scheduleReconnection()
       }
     }, 20000)
 
-    // Listen for ALL events to debug what's actually being received
-    this.socket.onAny((eventName, ...args) => {
-      console.log(`🔍 DEBUG: Received event '${eventName}' with args:`, JSON.stringify(args, null, 2))
-    })
+    // Set up pump.fun specific event handlers
+    this.setupPumpFunEventHandlers()
+  }
+
+  private setupPumpFunEventHandlers(): void {
+    if (!this.socket) return
 
     this.socket.on('newMessage', (message: IMessage) => {
-      console.log('📩 Server received new message:', JSON.stringify(message, null, 2))
+      this.log(`📩 New message from ${message.username}: ${message.message}`)
       this.handleNewMessage(message)
     })
 
     this.socket.on('messageHistory', (data: { messages: IMessage[] }) => {
-      console.log('📜 Server received message history:', data.messages?.length || 0, 'messages')
-      if (data.messages && data.messages.length > 0) {
-        console.log('📜 First message sample:', JSON.stringify(data.messages[0], null, 2))
-      }
+      this.log(`📜 Message history received: ${data.messages?.length || 0} messages`)
       this.handleMessageHistory(data.messages || [])
     })
 
     this.socket.on('userJoined', (data: { username: string, userAddress: string }) => {
-      console.log('👋 User joined:', JSON.stringify(data, null, 2))
+      this.log(`👋 User joined: ${data.username}`)
       this.emit('userJoined', data)
     })
 
     this.socket.on('userLeft', (data: { userAddress: string }) => {
-      console.log('👋 User left:', JSON.stringify(data, null, 2))
+      this.log(`👋 User left: ${data.userAddress}`)
       this.emit('userLeft', data.userAddress)
     })
 
     this.socket.on('joinRoomResponse', (response: { success: boolean, message?: string }) => {
-      console.log('🏠 Join room response:', JSON.stringify(response, null, 2))
       if (response.success) {
-        console.log('✅ Server successfully joined room:', this.roomId)
+        this.log(`✅ Successfully joined room: ${this.roomId}`)
         this.requestMessageHistory()
       } else {
-        console.error('❌ Server failed to join room:', response.message)
+        this.logError(`❌ Failed to join room: ${response.message}`)
         this.emit('serverError', response.message || 'Failed to join room')
       }
     })
 
     this.socket.on('serverError', (error: string) => {
-      console.error('🚨 Server Error:', error)
+      this.logError(`🚨 Server Error: ${error}`)
       this.emit('serverError', error)
     })
   }
 
-  private joinRoom() {
+  private joinRoom(): void {
     if (this.socket && this.isConnected) {
-      console.log('🔗 Server joining room:', this.roomId)
-      console.log('🔗 With username:', this.username)
+      this.log(`🔗 Joining room: ${this.roomId} as ${this.username}`)
       
       // Join room with proper payload
       this.socket.emit('joinRoom', {
@@ -212,10 +211,9 @@ export class ServerPumpChatClient extends EventEmitter {
         username: this.username
       })
       
-      // Also try alternative room joining patterns that pump.fun might expect
+      // Try alternative room joining patterns
       setTimeout(() => {
         if (this.socket && this.isConnected) {
-          console.log('🔗 Trying alternative room join pattern...')
           this.socket.emit('join', this.roomId)
           this.socket.emit('subscribe', { room: this.roomId })
         }
@@ -223,9 +221,9 @@ export class ServerPumpChatClient extends EventEmitter {
     }
   }
 
-  private requestMessageHistory() {
+  private requestMessageHistory(): void {
     if (this.socket && this.isConnected) {
-      console.log('📜 Server requesting message history for room:', this.roomId)
+      this.log(`📜 Requesting message history for room: ${this.roomId}`)
       
       // Try multiple message history request patterns
       this.socket.emit('getMessageHistory', {
@@ -234,10 +232,9 @@ export class ServerPumpChatClient extends EventEmitter {
         limit: this.messageHistoryLimit
       })
       
-      // Alternative patterns
+      // Alternative patterns with delay
       setTimeout(() => {
         if (this.socket && this.isConnected) {
-          console.log('📜 Trying alternative message history patterns...')
           this.socket.emit('messageHistory', { roomId: this.roomId })
           this.socket.emit('getHistory', { room: this.roomId, limit: this.messageHistoryLimit })
           this.socket.emit('fetchMessages', { roomId: this.roomId })
@@ -246,7 +243,7 @@ export class ServerPumpChatClient extends EventEmitter {
     }
   }
 
-  private handleNewMessage(message: IMessage) {
+  private handleNewMessage(message: IMessage): void {
     this.messageHistory.push(message)
     if (this.messageHistory.length > this.messageHistoryLimit) {
       this.messageHistory.shift()
@@ -254,12 +251,12 @@ export class ServerPumpChatClient extends EventEmitter {
     this.emit('message', message)
   }
 
-  private handleMessageHistory(messages: IMessage[]) {
+  private handleMessageHistory(messages: IMessage[]): void {
     this.messageHistory = messages.slice(-this.messageHistoryLimit)
     this.emit('messageHistory', this.messageHistory)
   }
 
-  public sendMessage(message: string) {
+  public sendMessage(message: string): void {
     if (this.socket && this.isConnected) {
       this.socket.emit('sendMessage', {
         roomId: this.roomId,
@@ -268,13 +265,13 @@ export class ServerPumpChatClient extends EventEmitter {
     }
   }
 
-  private scheduleReconnection() {
+  private scheduleReconnection(): void {
     if (this.isReconnecting || !this.shouldReconnect) {
       return
     }
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('❌ Max reconnection attempts reached. Giving up.')
+      this.logError('❌ Max reconnection attempts reached')
       this.emit('maxReconnectsReached')
       return
     }
@@ -285,7 +282,7 @@ export class ServerPumpChatClient extends EventEmitter {
     // Exponential backoff: 1s, 2s, 4s, 8s, 16s
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 16000)
     
-    console.log(`🔄 Scheduling reconnection in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
+    this.log(`🔄 Scheduling reconnection in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
 
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null
@@ -293,8 +290,8 @@ export class ServerPumpChatClient extends EventEmitter {
     }, delay)
   }
 
-  public disconnect() {
-    console.log('🔌 Server disconnecting from Socket.IO...')
+  public disconnect(): void {
+    this.log('🔌 Disconnecting from Socket.IO...')
     
     // Stop reconnection attempts
     this.shouldReconnect = false
@@ -329,14 +326,24 @@ export class ServerPumpChatClient extends EventEmitter {
     return this.isConnected && this.socket?.connected === true
   }
 
-  public getConnectionInfo() {
+  public getConnectionInfo(): {
+    isConnected: boolean
+    socketConnected: boolean
+    roomId: string
+    username: string
+    messageCount: number
+    socketId: string | null
+    reconnectAttempts: number
+    isReconnecting: boolean
+    shouldReconnect: boolean
+  } {
     return {
       isConnected: this.isConnected,
-      socketConnected: this.socket?.connected || false,
+      socketConnected: this.socket?.connected ?? false,
       roomId: this.roomId,
       username: this.username,
       messageCount: this.messageHistory.length,
-      socketId: this.socket?.id || null,
+      socketId: this.socket?.id ?? null,
       reconnectAttempts: this.reconnectAttempts,
       isReconnecting: this.isReconnecting,
       shouldReconnect: this.shouldReconnect

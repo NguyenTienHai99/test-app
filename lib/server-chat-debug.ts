@@ -1,4 +1,17 @@
 // Server-side chat debugger that uses Next.js API routes with Server-Sent Events
+
+// Detect lottery plays in messages
+function detectCommentPlay(message: string): string | null {
+  // xx-xx-xx-xx where xx are two-digit numbers (with or without curly braces)
+  const commentPlayPattern = /\{?\d{2}-\d{2}-\d{2}-\d{2}\}?/;
+  
+  // Find the match in the message
+  const match = message.match(commentPlayPattern);
+
+  // Return the matched string or null if no match is found
+  return match ? match[0] : null;
+}
+
 export interface ServerChatDebugConfig {
   roomId: string;
   username?: string;
@@ -43,6 +56,20 @@ export class ServerSideChatDebugger {
       this.eventSource.addEventListener('event', (event) => {
         try {
           const data = JSON.parse(event.data);
+          
+          // Check if this is a new message event and detect lottery plays
+          if (data.eventName === 'newMessage' && data.args && data.args[0]) {
+            const messageData = data.args[0];
+            if (messageData.message) {
+              const lotteryPlay = detectCommentPlay(messageData.message);
+              if (lotteryPlay) {
+                // Log the lottery play with special formatting
+                this.log(`🎰 LOTTERY PLAY DETECTED: ${lotteryPlay} by ${messageData.username}`);
+                this.log(`📝 Full message: ${messageData.message}`);
+              }
+            }
+          }
+          
           this.config.onEvent(data.eventName, data.args);
         } catch (error) {
           this.log(`❌ Error parsing event data: ${error}`);

@@ -1,17 +1,26 @@
 'use client';
 
 import { useState, useEffect, useRef } from "react";
-import { createChatDebugger, PumpFunChatDebugger } from "../lib/chat-debug";
 import { createServerSideChatDebugger, ServerSideChatDebugger } from "../lib/server-chat-debug";
+
+// Detect lottery plays in messages (duplicated here for UI use)
+function detectCommentPlay(message: string): string | null {
+  // xx-xx-xx-xx where xx are two-digit numbers (with or without curly braces)
+  const commentPlayPattern = /\{?\d{2}-\d{2}-\d{2}-\d{2}\}?/;
+  
+  // Find the match in the message
+  const match = message.match(commentPlayPattern);
+
+  // Return the matched string or null if no match is found
+  return match ? match[0] : null;
+}
 
 export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const [events, setEvents] = useState<Array<{eventName: string, args: unknown[]}>>([]);
+  const [lotteryPlays, setLotteryPlays] = useState<Array<{play: string, username: string, timestamp: string, fullMessage: string}>>([]);
   const [isRunning, setIsRunning] = useState(false);
-  const [roomId, setRoomId] = useState('J2eaKn35rp82T6RFEsNK9CLRHEKV9BLXjedFM3q6pump');
-  const [testMode, setTestMode] = useState(false);
-  const [useServerSide, setUseServerSide] = useState(true);
-  const debuggerRef = useRef<PumpFunChatDebugger | null>(null);
+  const [roomId, setRoomId] = useState('V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump');
   const serverDebuggerRef = useRef<ServerSideChatDebugger | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -25,44 +34,16 @@ export default function Home() {
 
   // Auto-start debugger when component mounts
   useEffect(() => {
-    // Auto-start the debugger when the app loads
+    // Auto-start the server-side debugger when the app loads
     setLogs([]);
     setEvents([]);
     setIsRunning(true);
 
-    if (testMode) {
-      // Test mode - simulate logs without actual connection
-      handleLog('🧪 Test mode enabled - simulating connection...');
-      handleLog('🚀 Starting pump.fun chat debug test...');
-      handleLog(`🏠 Room ID: ${roomId}`);
-      handleLog(`👤 Username: TestUser12345`);
-      
-      setTimeout(() => handleLog('🔄 Attempting WebSocket connection...'), 1000);
-      setTimeout(() => handleLog('❌ Connection error: websocket error'), 2000);
-      setTimeout(() => handleLog('🔄 Trying alternative connection methods...'), 3000);
-      setTimeout(() => handleLog('✅ Connected via HTTP polling! Socket ID: abc123'), 4000);
-      setTimeout(() => handleLog('🔗 Trying to join room...'), 5000);
-      setTimeout(() => {
-        handleEvent('connect', []);
-        handleLog('📡 EVENT: connect');
-      }, 6000);
-      
-      setTimeout(() => {
-        setIsRunning(false);
-        handleLog('⏰ Test completed.');
-      }, 10000);
-    } else if (useServerSide) {
-      // Use server-side debugger via API route - runs indefinitely
-      serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
-      serverDebuggerRef.current.start();
-      // Connection will stay alive until manually stopped or browser closed
-    } else {
-      // Use client-side debugger (will likely fail due to CORS)
-      debuggerRef.current = createChatDebugger(roomId, handleLog, handleEvent);
-      debuggerRef.current.start();
-      // Connection will stay alive until manually stopped or browser closed
-    }
-  }, [testMode, roomId, useServerSide]); // Re-run when testMode, roomId, or useServerSide changes
+    // Use server-side debugger via API route - runs continuously
+    serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
+    serverDebuggerRef.current.start();
+    // Connection will stay alive until manually stopped or browser closed
+  }, [roomId]); // Re-run when roomId changes
 
   const handleLog = (message: string) => {
     setLogs(prev => [...prev, message]);
@@ -70,13 +51,28 @@ export default function Home() {
 
   const handleEvent = (eventName: string, args: unknown[]) => {
     setEvents(prev => [...prev, { eventName, args }]);
+    
+    // Check for lottery plays in new messages
+    if (eventName === 'newMessage' && args && args[0]) {
+      const messageData = args[0] as { message?: string; username?: string };
+      if (typeof messageData.message === 'string' && typeof messageData.username === 'string') {
+        const message: string = messageData.message;
+        const username: string = messageData.username;
+        const lotteryPlay = detectCommentPlay(message);
+        if (lotteryPlay) {
+          const timestamp = new Date().toLocaleTimeString();
+          setLotteryPlays(prev => [...prev, {
+            play: lotteryPlay,
+            username,
+            timestamp,
+            fullMessage: message
+          }]);
+        }
+      }
+    }
   };
 
   const stopDebugger = () => {
-    if (debuggerRef.current) {
-      debuggerRef.current.stop();
-      debuggerRef.current = null;
-    }
     if (serverDebuggerRef.current) {
       serverDebuggerRef.current.stop();
       serverDebuggerRef.current = null;
@@ -85,11 +81,7 @@ export default function Home() {
   };
 
   const restartDebugger = () => {
-    // Stop current debuggers if running
-    if (debuggerRef.current) {
-      debuggerRef.current.stop();
-      debuggerRef.current = null;
-    }
+    // Stop current debugger if running
     if (serverDebuggerRef.current) {
       serverDebuggerRef.current.stop();
       serverDebuggerRef.current = null;
@@ -98,45 +90,19 @@ export default function Home() {
     // Clear logs and restart
     setLogs([]);
     setEvents([]);
+    setLotteryPlays([]);
     setIsRunning(true);
 
-    if (testMode) {
-      // Test mode - simulate logs without actual connection
-      handleLog('🧪 Test mode enabled - simulating connection...');
-      handleLog('🚀 Starting pump.fun chat debug test...');
-      handleLog(`🏠 Room ID: ${roomId}`);
-      handleLog(`👤 Username: TestUser12345`);
-      
-      setTimeout(() => handleLog('🔄 Attempting WebSocket connection...'), 1000);
-      setTimeout(() => handleLog('❌ Connection error: websocket error'), 2000);
-      setTimeout(() => handleLog('🔄 Trying alternative connection methods...'), 3000);
-      setTimeout(() => handleLog('✅ Connected via HTTP polling! Socket ID: abc123'), 4000);
-      setTimeout(() => handleLog('🔗 Trying to join room...'), 5000);
-      setTimeout(() => {
-        handleEvent('connect', []);
-        handleLog('📡 EVENT: connect');
-      }, 6000);
-      
-      setTimeout(() => {
-        setIsRunning(false);
-        handleLog('⏰ Test completed.');
-      }, 10000);
-    } else if (useServerSide) {
-      // Use server-side debugger via API route - runs indefinitely
-      serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
-      serverDebuggerRef.current.start();
-      // Connection will stay alive until manually stopped or browser closed
-    } else {
-      // Use client-side debugger (will likely fail due to CORS)
-      debuggerRef.current = createChatDebugger(roomId, handleLog, handleEvent);
-      debuggerRef.current.start();
-      // Connection will stay alive until manually stopped or browser closed
-    }
+    // Use server-side debugger via API route - runs continuously
+    serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
+    serverDebuggerRef.current.start();
+    // Connection will stay alive until manually stopped or browser closed
   };
 
   const clearLogs = () => {
     setLogs([]);
     setEvents([]);
+    setLotteryPlays([]);
   };
 
   return (
@@ -147,7 +113,7 @@ export default function Home() {
             Pump.fun Chat Debugger
           </h1>
           <p className="text-gray-600 dark:text-gray-400">
-            Real-time WebSocket debugging tool for pump.fun chat functionality - Auto-starts on page load
+            Real-time server-side WebSocket debugging tool for pump.fun chat functionality
           </p>
         </header>
 
@@ -171,34 +137,6 @@ export default function Home() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                     disabled={isRunning}
                   />
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="testMode"
-                    checked={testMode}
-                    onChange={(e) => setTestMode(e.target.checked)}
-                    className="mr-2"
-                    disabled={isRunning}
-                  />
-                  <label htmlFor="testMode" className="text-sm text-gray-700 dark:text-gray-300">
-                    Test Mode (simulate connection)
-                  </label>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="useServerSide"
-                    checked={useServerSide}
-                    onChange={(e) => setUseServerSide(e.target.checked)}
-                    className="mr-2"
-                    disabled={isRunning || testMode}
-                  />
-                  <label htmlFor="useServerSide" className="text-sm text-gray-700 dark:text-gray-300">
-                    Server-side Connection (recommended)
-                  </label>
                 </div>
 
                 <div className="flex flex-col gap-2">
@@ -253,6 +191,34 @@ export default function Home() {
                 ))}
               </div>
             </div>
+
+            {/* Lottery Plays */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-6">
+              <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
+                🎰 Lottery Plays Detected ({lotteryPlays.length})
+              </h3>
+              <div className="space-y-3 max-h-64 overflow-y-auto">
+                {lotteryPlays.length === 0 ? (
+                  <div className="text-gray-500 dark:text-gray-400 text-sm">
+                    No lottery plays detected yet. Watching for xx-xx-xx-xx patterns...
+                  </div>
+                ) : (
+                  lotteryPlays.map((lottery, index) => (
+                    <div key={index} className="border-l-4 border-yellow-500 pl-3 py-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-r">
+                      <div className="font-mono text-lg font-bold text-yellow-700 dark:text-yellow-300">
+                        {lottery.play}
+                      </div>
+                      <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        by <span className="font-semibold">{lottery.username}</span> at {lottery.timestamp}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
+                        Full message: &quot;{lottery.fullMessage}&quot;
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Logs */}
@@ -281,8 +247,8 @@ export default function Home() {
         <footer className="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">
           <div className="mb-2">Built with Next.js 15, TypeScript, and Socket.IO Client</div>
           <div className="text-xs">
-            <strong>Note:</strong> If you&apos;re seeing WebSocket connection errors, this is normal when testing pump.fun&apos;s chat server from localhost. 
-            The server may have CORS restrictions or require specific authentication. Use Test Mode to see the interface functionality.
+            <strong>Server-side WebSocket Connection:</strong> This debugger runs pump.fun chat connections server-side to bypass CORS restrictions. 
+            Real-time events are streamed to your browser via Server-Sent Events (SSE).
           </div>
         </footer>
       </div>
