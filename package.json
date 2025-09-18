@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "@types/socket.io-client": "^1.4.36",
+    "fs": "^0.0.1-security",
     "next": "15.5.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

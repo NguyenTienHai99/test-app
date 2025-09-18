@@ -12,6 +12,13 @@ function detectCommentPlay(message: string): string | null {
   return match ? match[0] : null;
 }
 
+// Parse lottery numbers from detected pattern
+function parseLotteryNumbers(lotteryPlay: string): number[] {
+  // Remove curly braces if present and split by dash
+  const cleanPlay = lotteryPlay.replace(/[{}]/g, '');
+  return cleanPlay.split('-').map(num => parseInt(num, 10));
+}
+
 export interface ServerChatDebugConfig {
   roomId: string;
   username?: string;
@@ -60,12 +67,36 @@ export class ServerSideChatDebugger {
           // Check if this is a new message event and detect lottery plays
           if (data.eventName === 'newMessage' && data.args && data.args[0]) {
             const messageData = data.args[0];
-            if (messageData.message) {
+            if (messageData.message && messageData.username) {
               const lotteryPlay = detectCommentPlay(messageData.message);
               if (lotteryPlay) {
                 // Log the lottery play with special formatting
                 this.log(`🎰 LOTTERY PLAY DETECTED: ${lotteryPlay} by ${messageData.username}`);
                 this.log(`📝 Full message: ${messageData.message}`);
+                
+                // Save to database via API
+                const numbers = parseLotteryNumbers(lotteryPlay);
+                fetch('/api/lottery-plays/save', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    username: messageData.username,
+                    profileImage: messageData.profile_image || undefined,
+                    numbers: numbers,
+                    message: messageData.message,
+                    walletAddress: messageData.userAddress || undefined
+                  })
+                }).then((response) => {
+                  if (response.ok) {
+                    this.log(`💾 Lottery play saved to database`);
+                  } else {
+                    this.log(`❌ Error saving lottery play: HTTP ${response.status}`);
+                  }
+                }).catch((error: unknown) => {
+                  this.log(`❌ Error saving lottery play to database: ${error}`);
+                });
               }
             }
           }

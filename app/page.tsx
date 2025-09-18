@@ -1,75 +1,77 @@
 'use client';
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createServerSideChatDebugger, ServerSideChatDebugger } from "../lib/server-chat-debug";
 
-// Detect lottery plays in messages (duplicated here for UI use)
-function detectCommentPlay(message: string): string | null {
-  // xx-xx-xx-xx where xx are two-digit numbers (with or without curly braces)
-  const commentPlayPattern = /\{?\d{2}-\d{2}-\d{2}-\d{2}\}?/;
-  
-  // Find the match in the message
-  const match = message.match(commentPlayPattern);
+// Type definition for lottery play (matching the database interface)
+interface LotteryPlay {
+  id?: number;
+  username: string;
+  profileImage?: string;
+  numbers: number[];
+  timestamp: Date;
+  message: string;
+  walletAddress?: string;
+}
 
-  // Return the matched string or null if no match is found
-  return match ? match[0] : null;
+// Type for API response lottery play (before Date conversion)
+interface LotteryPlayResponse {
+  id?: number;
+  username: string;
+  profileImage?: string;
+  numbers: number[];
+  timestamp: string; // API returns string, we convert to Date
+  message: string;
+  walletAddress?: string;
 }
 
 export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const [events, setEvents] = useState<Array<{eventName: string, args: unknown[]}>>([]);
-  const [lotteryPlays, setLotteryPlays] = useState<Array<{play: string, username: string, timestamp: string, fullMessage: string}>>([]);
+  const [lotteryPlays, setLotteryPlays] = useState<LotteryPlay[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [roomId, setRoomId] = useState('V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump');
   const serverDebuggerRef = useRef<ServerSideChatDebugger | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Function to refresh lottery plays from database via API
+  const refreshLotteryPlays = async () => {
+    try {
+      const response = await fetch('/api/lottery-plays?limit=10');
+      const data = await response.json();
+      
+      if (data.success && data.data) {
+        // Convert timestamp strings back to Date objects
+        const plays = data.data.map((play: LotteryPlayResponse) => ({
+          ...play,
+          timestamp: new Date(play.timestamp)
+        }));
+        setLotteryPlays(plays);
+      } else {
+        console.error('Failed to fetch lottery plays:', data.error);
+      }
+    } catch (error) {
+      console.error('Failed to fetch lottery plays:', error);
+    }
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [logs]);
+  const handleEvent = useCallback((eventName: string, args: unknown[]) => {
+    setEvents(prev => [...prev, { eventName, args }]);
+    
+    // Refresh lottery plays when new messages arrive (server handles detection and saving)
+    if (eventName === 'newMessage') {
+      // Small delay to ensure server has processed and saved the lottery play
+      setTimeout(refreshLotteryPlays, 1000);
+    }
+  }, []);
 
-  // Auto-start debugger when component mounts
   useEffect(() => {
-    // Auto-start the server-side debugger when the app loads
-    setLogs([]);
-    setEvents([]);
-    setIsRunning(true);
-
-    // Use server-side debugger via API route - runs continuously
-    serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
-    serverDebuggerRef.current.start();
-    // Connection will stay alive until manually stopped or browser closed
-  }, [roomId]); // Re-run when roomId changes
+    // Initial load of lottery plays
+    refreshLotteryPlays();
+  }, []);
 
   const handleLog = (message: string) => {
     setLogs(prev => [...prev, message]);
-  };
-
-  const handleEvent = (eventName: string, args: unknown[]) => {
-    setEvents(prev => [...prev, { eventName, args }]);
-    
-    // Check for lottery plays in new messages
-    if (eventName === 'newMessage' && args && args[0]) {
-      const messageData = args[0] as { message?: string; username?: string };
-      if (typeof messageData.message === 'string' && typeof messageData.username === 'string') {
-        const message: string = messageData.message;
-        const username: string = messageData.username;
-        const lotteryPlay = detectCommentPlay(message);
-        if (lotteryPlay) {
-          const timestamp = new Date().toLocaleTimeString();
-          setLotteryPlays(prev => [...prev, {
-            play: lotteryPlay,
-            username,
-            timestamp,
-            fullMessage: message
-          }]);
-        }
-      }
-    }
   };
 
   const stopDebugger = () => {
@@ -205,14 +207,16 @@ export default function Home() {
                 ) : (
                   lotteryPlays.map((lottery, index) => (
                     <div key={index} className="border-l-4 border-yellow-500 pl-3 py-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-r">
-                      <div className="font-mono text-lg font-bold text-yellow-700 dark:text-yellow-300">
-                        {lottery.play}
-                      </div>
-                      <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        by <span className="font-semibold">{lottery.username}</span> at {lottery.timestamp}
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
-                        Full message: &quot;{lottery.fullMessage}&quot;
+                                            <div className="p-2 border border-purple-300 rounded-lg">
+                        <div className="font-bold text-purple-700">
+                          Numbers: {lottery.numbers.join('-')}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          by <span className="font-semibold">{lottery.username}</span> at {lottery.timestamp.toLocaleTimeString()}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          Full message: &quot;{lottery.message}&quot;
+                        </div>
                       </div>
                     </div>
                   ))
