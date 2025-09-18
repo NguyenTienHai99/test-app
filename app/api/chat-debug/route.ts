@@ -211,19 +211,8 @@ export async function GET(request: NextRequest) {
       
       client.connect();
 
-      // Auto-disconnect after 30 seconds
-      autoDisconnectTimeout = setTimeout(() => {
-        if (!isControllerClosed) {
-          sendEvent('log', { 
-            message: `⏰ Test completed. Disconnecting...`,
-            timestamp: new Date().toLocaleTimeString()
-          });
-          client.disconnect();
-          activeConnections.delete(connectionId);
-          safeClose();
-        }
-      }, 30000);
-
+      // Note: Removed auto-disconnect - connection will stay alive until client disconnects
+      
       // Clean up on client disconnect
       request.signal.addEventListener('abort', () => {
         if (autoDisconnectTimeout) {

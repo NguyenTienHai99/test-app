@@ -52,29 +52,15 @@ export default function Home() {
         handleLog('⏰ Test completed.');
       }, 10000);
     } else if (useServerSide) {
-      // Use server-side debugger via API route
+      // Use server-side debugger via API route - runs indefinitely
       serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
       serverDebuggerRef.current.start();
-
-      // Auto-stop after 30 seconds
-      setTimeout(() => {
-        if (serverDebuggerRef.current) {
-          serverDebuggerRef.current.stop();
-          setIsRunning(false);
-        }
-      }, 30000);
+      // Connection will stay alive until manually stopped or browser closed
     } else {
       // Use client-side debugger (will likely fail due to CORS)
       debuggerRef.current = createChatDebugger(roomId, handleLog, handleEvent);
       debuggerRef.current.start();
-
-      // Auto-stop after 30 seconds
-      setTimeout(() => {
-        if (debuggerRef.current) {
-          debuggerRef.current.stop();
-          setIsRunning(false);
-        }
-      }, 30000);
+      // Connection will stay alive until manually stopped or browser closed
     }
   }, [testMode, roomId, useServerSide]); // Re-run when testMode, roomId, or useServerSide changes
 
@@ -136,29 +122,15 @@ export default function Home() {
         handleLog('⏰ Test completed.');
       }, 10000);
     } else if (useServerSide) {
-      // Use server-side debugger via API route
+      // Use server-side debugger via API route - runs indefinitely
       serverDebuggerRef.current = createServerSideChatDebugger(roomId, handleLog, handleEvent);
       serverDebuggerRef.current.start();
-
-      // Auto-stop after 30 seconds
-      setTimeout(() => {
-        if (serverDebuggerRef.current) {
-          serverDebuggerRef.current.stop();
-          setIsRunning(false);
-        }
-      }, 30000);
+      // Connection will stay alive until manually stopped or browser closed
     } else {
       // Use client-side debugger (will likely fail due to CORS)
       debuggerRef.current = createChatDebugger(roomId, handleLog, handleEvent);
       debuggerRef.current.start();
-
-      // Auto-stop after 30 seconds
-      setTimeout(() => {
-        if (debuggerRef.current) {
-          debuggerRef.current.stop();
-          setIsRunning(false);
-        }
-      }, 30000);
+      // Connection will stay alive until manually stopped or browser closed
     }
   };
 
