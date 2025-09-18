@@ -24,6 +24,8 @@ export async function GET(request: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       const connectionId = `${roomId}-${username}-${Date.now()}`;
+      let isControllerClosed = false;
+      let autoDisconnectTimeout: NodeJS.Timeout | null = null;
       
       // Clean up any existing connection for this room
       const existingConnection = activeConnections.get(roomId);
@@ -40,10 +42,34 @@ export async function GET(request: NextRequest) {
 
       activeConnections.set(connectionId, client);
 
-      // Helper function to send SSE data
+      // Helper function to send SSE data with controller state check
       const sendEvent = (event: string, data: LogData | EventData) => {
-        const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(new TextEncoder().encode(message));
+        if (isControllerClosed) {
+          return; // Don't try to send if controller is already closed
+        }
+        try {
+          const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+          controller.enqueue(new TextEncoder().encode(message));
+        } catch (error) {
+          console.error('Error sending SSE event:', error);
+          isControllerClosed = true;
+        }
+      };
+
+      // Helper function to safely close the controller
+      const safeClose = () => {
+        if (!isControllerClosed) {
+          isControllerClosed = true;
+          if (autoDisconnectTimeout) {
+            clearTimeout(autoDisconnectTimeout);
+            autoDisconnectTimeout = null;
+          }
+          try {
+            controller.close();
+          } catch (error) {
+            console.error('Error closing controller:', error);
+          }
+        }
       };
 
       // Send initial log
@@ -170,10 +196,10 @@ export async function GET(request: NextRequest) {
           timestamp: new Date().toLocaleTimeString()
         });
         
-        // Clean up and close stream
+        // Clean up and close stream safely
         setTimeout(() => {
           activeConnections.delete(connectionId);
-          controller.close();
+          safeClose();
         }, 1000);
       });
 
@@ -186,23 +212,39 @@ export async function GET(request: NextRequest) {
       client.connect();
 
       // Auto-disconnect after 30 seconds
-      setTimeout(() => {
-        sendEvent('log', { 
-          message: `⏰ Test completed. Disconnecting...`,
-          timestamp: new Date().toLocaleTimeString()
-        });
-        client.disconnect();
-        activeConnections.delete(connectionId);
-        controller.close();
+      autoDisconnectTimeout = setTimeout(() => {
+        if (!isControllerClosed) {
+          sendEvent('log', { 
+            message: `⏰ Test completed. Disconnecting...`,
+            timestamp: new Date().toLocaleTimeString()
+          });
+          client.disconnect();
+          activeConnections.delete(connectionId);
+          safeClose();
+        }
       }, 30000);
 
       // Clean up on client disconnect
       request.signal.addEventListener('abort', () => {
+        if (autoDisconnectTimeout) {
+          clearTimeout(autoDisconnectTimeout);
+          autoDisconnectTimeout = null;
+        }
         client.disconnect();
         activeConnections.delete(connectionId);
-        controller.close();
+        safeClose();
       });
     },
+    
+    cancel() {
+      // This is called when the client closes the connection
+      console.log('SSE stream cancelled by client');
+      // Clean up any remaining connections
+      activeConnections.forEach((connection, key) => {
+        connection.disconnect();
+        activeConnections.delete(key);
+      });
+    }
   });
 
   return new Response(stream, {
